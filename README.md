@@ -4,5 +4,5 @@ Planned latency is about ~10 mS (it will be checked)
 
 
 Measured - 13 milliseconds!
-
+![image1](https://github.com/sdima1357/stm32f401cdu6_nrf_audio/blob/main/images/IMG_20240609_221716_2c.jpg?raw=true)
 
