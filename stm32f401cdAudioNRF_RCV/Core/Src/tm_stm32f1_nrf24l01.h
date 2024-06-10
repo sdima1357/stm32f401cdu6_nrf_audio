@@ -54,14 +54,26 @@ extern "C" {
 @verbatim
 NRF24L01+	STM32F4xx	DESCRIPTION
 
-GND			GND			Ground
-VCC			3.3V		3.3V
-CE			PD8			RF activated pin
-CSN			PD7			Chip select pin for SPI
-SCK			PC10		SCK pin for SPI
-MOSI		PC12		MOSI pin for SPI
-MISO		PC11		MISO pin for SPI
-IRQ			Not used	Interrupt pin. Goes low when active. Pin functionality is active, but not used in library
+Minor modified for audio project
+view from up:
+
+|----------------------------------|
+|1   2		  ___			\	   |
+|3   4		 |___|			 \	   |
+|5   6		 ______			/	   |
+|7   8		<______	>		\	   |
+|----------------------------------|
+
+
+1 GND			GND			Ground
+2 VCC			3.3V		3.3V
+3 CE			PA2			RF activated pin   			NRF_CE  in main.h
+4 CSN			PA3			Chip select pin for SPI     NRF_CSN in main.h
+5 SCK			PB3			SCK pin for SPI             SPI3_CLK
+6 MOSI			PB5			MOSI pin for SPI			SPI3_MOSI
+7 MISO			PB4			MISO pin for SPI			SPI3_MISO
+8 IRQ			PA1			Interrupt pin 				NRF_IRQ in main.h Goes low when active.Allmost no used
+
 @endverbatim 	
  *
  * IRQ pin is not used in this library, but it's functionality is enabled by this software.

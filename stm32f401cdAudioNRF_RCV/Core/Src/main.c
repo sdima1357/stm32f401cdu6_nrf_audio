@@ -66,7 +66,9 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 #endif
 #define LINEAR_INTERPOLATION
 
-#define NUM_RCV_BFRS 4
+#define NUM_RCV_BFRS 2
+//https://askubuntu.com/questions/78174/play-sound-through-two-or-more-outputs-devices
+
 /*
  * best config
 #define NUM_RCV_BFRS 4
@@ -81,8 +83,8 @@ int timeForRecivedSamples_mean[TIME_FILT_LEN];
 float scaleOffs = 1;
 float scaleDiff = 2;
 */
-#define OLD
-#ifdef OLD
+/*
+best one
 #define TIME_FILT_LEN 6
 int timeForRecivedSamples_mean[TIME_FILT_LEN];
 
@@ -92,6 +94,19 @@ int timeForRecivedSamples_mean[TIME_FILT_LEN];
 #define MAX_CORR  (TIME_SCALE_FACT>>12)
 float scaleOffs = 1;
 float scaleDiff = 2;
+ *
+ * */
+#define OLD
+#ifdef OLD
+#define TIME_FILT_LEN 10
+int timeForRecivedSamples_mean[TIME_FILT_LEN];
+
+#define TIME_BIT_SCALE_FACT 17
+#define TIME_SCALE_FACT     (1<<TIME_BIT_SCALE_FACT)
+
+#define MAX_CORR  (TIME_SCALE_FACT>>12)
+int     scaleOffs = 2;
+int     scaleDiff = 1;
 #else
 #define TIME_FILT_LEN 6
 int timeForRecivedSamples_mean[TIME_FILT_LEN];
@@ -268,8 +283,18 @@ int  median3(int  a, int  b, int  c)
 
 int tfl_mean[3];
 int pnt_mean = 0;
-int       lastDmaPos;
-uint16_t  lastDmaAccessTime;
+//volatile int       lastDmaPos;
+//volatile uint16_t  lastDmaAccessTime;
+
+struct sLastDma
+{
+	uint16_t  lastDmaPos;
+	uint16_t  lastDmaAccessTime;
+};
+
+volatile struct sLastDma lastDma;
+
+
 uint32_t  readPositionXScaled  = 0;  //readPosition<<12;
 uint32_t  readSpeedXScaled     = 1;
 volatile int UsbSamplesAvail = 0;
@@ -283,8 +308,6 @@ void * usb_SndBuffer        = 0;
 
 int volume = VOL_SCALE;
 
-int corrQ[3];
-int corrQpos = 0;
 int bytesPerSampleLR = 4;
 void AUDIO_OUT_Start(void* pBuffer, uint32_t Size,int sampleBits)
 {
@@ -343,7 +366,15 @@ void calcV(struct STD_VAR * pnt,float* pmean,float*pvariance)
 	*pvariance =  sqrtf(variance);
 }
 int forceCounter = 0;
+int module(int num,int mod)
+{
+	while(num>mod/2)   num-=mod;
+	while(num<-mod/2)  num+=mod;
+	return num;
+}
 
+
+int ledTimeOut = 0;
 #ifdef OLD
 void AUDIO_OUT_Periodic(uint16_t* pBuffer)
 {
@@ -351,6 +382,13 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer)
 	if(!usb_SndBuffer || OUT_MODE == NONE) return ;
 	int cPos  = (pBuffer - (uint16_t*)usb_SndBuffer)/2;
 	uint16_t lastAudioUsbTimeStampNew = TIM3->CNT;
+	struct sLastDma lastDmaCopy = lastDma;
+
+	//uint16_t lastDmaAccessTimeCopy =
+			lastDmaCopy.lastDmaAccessTime;
+	//int      lastDmaPosCopy =
+			lastDmaCopy.lastDmaPos;
+
 	if(cPos==0)
 	{
 
@@ -378,112 +416,82 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer)
 		summ_t -=max_t+min_t;
 		summ_t/= TIME_FILT_LEN-2;
 		timeForRecivedSamples  = summ_t;
-		//printf("timeForRecivedSamples %d\n");
-		//(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT;
-		if(timeForRecivedSamples)
-		{
-			inputSpeed = samplesInBuff*TIMER_CLOCK_FREQ/timeForRecivedSamples;
-			///*
-#if 0
-			float outSpeed = (TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT;
-			//float outSpeed = OUT_MODE==SPDIF?(FREQ/4):FREQ;
-			int sForcedSpeedA = (int)(inputSpeed*TIME_SCALE_FACT/outSpeed);
-			int res = readSpeedXScaled-sForcedSpeedA;
-			if(res<0) res = -res;
-			if((res*100/sForcedSpeedA)>20)
-			{
-				printf("Force A!!!\n");
-				sForcedSpeed = sForcedSpeedA;
-				readSpeedXScaled = sForcedSpeed;
-				readPositionXScaled = samplesInBuffScaled/2;
-			}
-#endif
-			//*/
 
+		inputSpeed = samplesInBuff*TIMER_CLOCK_FREQ/timeForRecivedSamples;
+
+
+		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaCopy.lastDmaAccessTime;
+		if(timeFromLastDMA&0x8000)
+		{
+			// seems we here have interrupt
+			timeFromLastDMA = 0;
 		}
 
-
-		//sForcedSpeed = (int)(samplesInBuff*TIME_SCALE_FACT*mean/(timeForRecivedSamples*N_SIZE);
-
-		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaAccessTime;
 
 
 		//where i am ?
 
-		//int approximateSamplesOutedFromLastDMA  = 0;//((float)timeFromLastDMA/TIMER_CLOCK_FREQ)*inputSpeed;
 		int approximateSamplesOutedFromLastDMA  = ((float)timeFromLastDMA/TIMER_CLOCK_FREQ)*inputSpeed;
 
 
 
-		int appDistance  =  (int)(lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos;
-		appDistance = (appDistance+samplesInBuff)%samplesInBuff;
+#define  OVER_OFFSET (samplesInBuff*15/16)
 
-		int offset_C = appDistance - samplesInBuffH;
+		int appDistance  =  (int)(lastDmaCopy.lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos + OVER_OFFSET;
+
+		int offset_C = module(appDistance - samplesInBuffH ,samplesInBuff);
 
         if(UsbSamplesAvail>0)
 		{
 
         	if(timeForRecivedSamples)
         	{
-				int diff_C = appDistance - prevPos;
-				while(diff_C>samplesInBuffH)  diff_C-=samplesInBuff;
-				while(diff_C<-samplesInBuffH) diff_C+=samplesInBuff;
+				int diff_C = module(appDistance - prevPos,samplesInBuff);
+
 				appDistErr = offset_C;
 				addV(&sPos,offset_C);
 				addV(&sDif,diff_C);
 
-			//	int fact = outSpeed/(inputSpeed+1);
 				int corr = (offset_C*scaleOffs + diff_C*scaleDiff);
-				//corrQ[corrQpos] = corr; corrQpos =(corrQpos+1)%3;
-				//corr = median3(corrQ[0],corrQ[1],corrQ[2]);
-				//printf("err %d\n",err);
 				if(offset_C > samplesInBuffH/4 || offset_C <-samplesInBuffH/4 ) //seems completely lost sync , force set frequency
 				{
 #if 1
-					//float outSpeed = OUT_MODE==SPDIF?(FREQ/4):FREQ;
-					//printf("forceB %d %d %d %d \n",appDistErr,appDistance,lastDmaPos,approximateSamplesOutedFromLastDMA);
+					//if(ledTimeOut>0)
+					//printf("forceB %d %d %d %d %d %d %d\n",corr,offset_C,appDistance,lastDmaCopy.lastDmaPos,approximateSamplesOutedFromLastDMA,timeFromLastDMA,samplesInBuff);
 					sForcedSpeed = (int)(inputSpeed*TIME_SCALE_FACT/outSpeed);
 					readSpeedXScaled = sForcedSpeed;
 					forceCounter ++;
-					readPositionXScaled = (samplesInBuffScaled/2+3*readPositionXScaled)/4;
+					//move position toward center
+					readPositionXScaled = (samplesInBuffScaled/2+7*readPositionXScaled)/8;
 #endif
 				}
 				else
 				{
-					//ok - only phase tune
-/*
-					if(dC + (err/16)>0)
-					{
-						readSpeedXScaled--;
-					}
-					else
-					{
-						readSpeedXScaled++;
-					}
-*/
-
 					if(corr > MAX_CORR)
 					{
+						HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
+						ledTimeOut = 10;
 						corr = MAX_CORR;
 					}
-					if(corr < -MAX_CORR)
+					else if(corr < -MAX_CORR)
 					{
+						HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
+						ledTimeOut = 10;
 						corr  =-MAX_CORR;
-					}
-
-/*
-					if(corr<32&& corr>-32)
-					{
 					}
 					else
 					{
-						corr/=8;
+						if(ledTimeOut>0)
+						{
+							ledTimeOut--;
+						}
+						else
+						{
+							HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_SET);
+						}
+
 					}
-*/
 					readSpeedXScaled -= corr;
-					//readSpeedXScaled -= (dC*4 + (err/4));
-					//readSpeedXScaled -= ((dC*16 + (err/32)));// + 8*err/samplesInBuff ;//- ((err>0)?1:(err<0)?-1:0);
-					//readSpeedXScaled -= ((dC*32 + (err/8)));// + 8*err/samplesInBuff ;//- ((err>0)?1:(err<0)?-1:0);
 				}
         	}
 		}
@@ -728,14 +736,13 @@ void checkTime()
 {
 	uint16_t prevTime;
 	uint16_t  tfl;
-	prevTime = lastDmaAccessTime;
-	lastDmaAccessTime = TIM3->CNT;
-	//lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
-	//tfl = lastDmaAccessTime -prevTime;
-	//outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
+	struct sLastDma lastDmaCopy;
+	prevTime = lastDma.lastDmaAccessTime;
+	lastDmaCopy.lastDmaPos = readPositionXScaled>>TIME_BIT_SCALE_FACT;;
+	lastDmaCopy.lastDmaAccessTime = TIM3->CNT;
+	lastDma = lastDmaCopy;
 
-	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
-	tfl      = lastDmaAccessTime -prevTime;
+	tfl      = lastDmaCopy.lastDmaAccessTime -prevTime;
 
 	tfl_mean[pnt_mean] = tfl;
 	pnt_mean++;
@@ -1107,7 +1114,7 @@ void example()
 			}
 #endif
 			old_counter = ATemp.num;//%NUM_PAKS_IN_SUP;
-			HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+			//HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
 	    }
 }
 /* USER CODE END PV */
