@@ -60,7 +60,7 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 #define LOW_LATENCY
 
 #ifdef LOW_LATENCY
-#define SPDIF_FRAMES (192/8)
+#define SPDIF_FRAMES (192/16)
 #else
 #define SPDIF_FRAMES (192)
 #endif
@@ -68,6 +68,8 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 #define NUM_RCV_BFRS 2
 //https://askubuntu.com/questions/78174/play-sound-through-two-or-more-outputs-devices
+//https://www.aliexpress.com/item/32810814170.html
+
 
 /*
  * best config
@@ -96,27 +98,27 @@ float scaleOffs = 1;
 float scaleDiff = 2;
  *
  * */
-#define OLD
+//#define OLD
 #ifdef OLD
-#define TIME_FILT_LEN 10
-int timeForRecivedSamples_mean[TIME_FILT_LEN];
-
-#define TIME_BIT_SCALE_FACT 17
-#define TIME_SCALE_FACT     (1<<TIME_BIT_SCALE_FACT)
-
-#define MAX_CORR  (TIME_SCALE_FACT>>12)
-int     scaleOffs = 2;
-int     scaleDiff = 1;
-#else
 #define TIME_FILT_LEN 6
 int timeForRecivedSamples_mean[TIME_FILT_LEN];
 
 #define TIME_BIT_SCALE_FACT 18
 #define TIME_SCALE_FACT     (1<<TIME_BIT_SCALE_FACT)
 
-#define MAX_CORR  (TIME_SCALE_FACT>>14)
-float scaleOffs = 2;
-float scaleDiff = 1;
+#define MAX_CORR  (TIME_SCALE_FACT>>13)
+int     scaleOffs = 4;
+int     scaleDiff = 8;
+#else
+#define TIME_FILT_LEN 18
+int timeForRecivedSamples_mean[TIME_FILT_LEN];
+
+#define TIME_BIT_SCALE_FACT 18
+#define TIME_SCALE_FACT     (1<<TIME_BIT_SCALE_FACT)
+
+#define MAX_CORR  (TIME_SCALE_FACT>>11)
+int  scaleOffs = 2;
+int  scaleDiff = 4;
 #endif
 //float scaleOffs = 1;
 //float scaleDiff = 2;
@@ -321,7 +323,11 @@ void AUDIO_OUT_Start(void* pBuffer, uint32_t Size,int sampleBits)
 
 	samplesInBuffScaled = samplesInBuff<<TIME_BIT_SCALE_FACT;
 	readPositionXScaled = samplesInBuffScaled/2;
+#ifdef OLD
 	int timeForRecivedSamples = samplesInBuff*TIMER_CLOCK_FREQ/USBD_AUDIO_FREQ;
+#else
+	int timeForRecivedSamples = samplesInBuff*TIMER_CLOCK_FREQ/USBD_AUDIO_FREQ/NUM_RCV_BFRS;
+#endif
 	for(int k=0;k<TIME_FILT_LEN;k++)
 	{
 		timeForRecivedSamples_mean[k] = timeForRecivedSamples;
@@ -449,8 +455,8 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer)
 				int diff_C = module(appDistance - prevPos,samplesInBuff);
 
 				appDistErr = offset_C;
-				addV(&sPos,offset_C);
-				addV(&sDif,diff_C);
+				addV(&sPos,diff_C);
+				addV(&sDif,offset_C);
 
 				int corr = (offset_C*scaleOffs + diff_C*scaleDiff);
 				if(offset_C > samplesInBuffH/4 || offset_C <-samplesInBuffH/4 ) //seems completely lost sync , force set frequency
@@ -512,11 +518,15 @@ void AUDIO_OUT_Periodic(uint8_t* pBuffer)
 	//AUDIO_PeriodicTC_FS_Counter++;
 	if(!usb_SndBuffer || OUT_MODE == NONE) return ;
 	uint16_t lastAudioUsbTimeStampNew = TIM3->CNT;
-	int cPos  = (pBuffer - (uint8_t*)usb_SndBuffer)/bytesPerSampleLR;
-	{
-	int outSpeed = OUT_MODE==SPDIF?(FREQ/4):FREQ;
-	UsbSamplesAvail = 8.0f*samplesInBuff*(outSpeed+1)/(inputSpeed+1);
-	}
+	int currentWritePos  = (pBuffer - (uint8_t*)usb_SndBuffer)/bytesPerSampleLR;
+	struct sLastDma lastDmaCopy = lastDma;
+    //if(!cPos)
+    {
+	//uint16_t lastDmaAccessTimeCopy =
+			lastDmaCopy.lastDmaAccessTime;
+	//int      lastDmaPosCopy =
+			lastDmaCopy.lastDmaPos;
+
 
 		uint16_t timeForRecivedSamples = lastAudioUsbTimeStampNew - lastAudioUsbTimeStamp;
 
@@ -525,6 +535,8 @@ void AUDIO_OUT_Periodic(uint8_t* pBuffer)
 
 
         lastAudioUsbTimeStamp = lastAudioUsbTimeStampNew;
+
+		//
 
 
 		//int  timeForRecivedSamples = median3(timeForRecivedSamples_mean[0],timeForRecivedSamples_mean[1],timeForRecivedSamples_mean[2]);
@@ -542,68 +554,96 @@ void AUDIO_OUT_Periodic(uint8_t* pBuffer)
 		timeForRecivedSamples  = summ_t;
 
 		inputSpeed = samplesInBuff*TIMER_CLOCK_FREQ/timeForRecivedSamples/NUM_RCV_BFRS;
+	//	inputSpeed = samplesInBuff*TIMER_CLOCK_FREQ/timeForRecivedSamples;
 
-		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaAccessTime;
+
+		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaCopy.lastDmaAccessTime;
+		if(timeFromLastDMA&0x8000)
+		{
+			// seems we here have interrupt
+			timeFromLastDMA = 0;
+		}
+
 
 
 		//where i am ?
 
-		//int approximateSamplesOutedFromLastDMA  = 0;//((float)timeFromLastDMA/TIMER_CLOCK_FREQ)*inputSpeed;
-		int approximateSamplesOutedFromLastDMA  = inputSpeed*timeFromLastDMA/TIMER_CLOCK_FREQ;
-
-		int appDistance  = lastDmaPos + approximateSamplesOutedFromLastDMA-cPos;
-
-		while(appDistance<0)
-			appDistance+=samplesInBuff;
-		while(appDistance>=samplesInBuff)
-			appDistance-=samplesInBuff;
+		int approximateSamplesOutedFromLastDMA  = ((float)timeFromLastDMA/TIMER_CLOCK_FREQ)*inputSpeed;
+        int currentReadPos = approximateSamplesOutedFromLastDMA + lastDmaCopy.lastDmaPos;
 
 
-		int offset_C     = appDistance - samplesInBuffH;
+#define  OVER_OFFSET (samplesInBuff*1/16)
+
+		int appDistance  =  (currentWritePos  - currentReadPos + OVER_OFFSET + samplesInBuff) % samplesInBuff;
+
+		int offset_C = module(appDistance - samplesInBuffH ,samplesInBuff);
 
         if(UsbSamplesAvail>0)
 		{
-				int diff_C = appDistance - prevPos;
-				while(diff_C>samplesInBuffH)
-					diff_C-=samplesInBuff;
-				while(diff_C<-samplesInBuffH)
-					diff_C+=samplesInBuff;
+
+        	if(timeForRecivedSamples)
+        	{
+				int diff_C = module(appDistance - prevPos,samplesInBuff);
 
 				appDistErr = offset_C;
 				addV(&sPos,offset_C);
 				addV(&sDif,diff_C);
 
 				int corr = (offset_C*scaleOffs + diff_C*scaleDiff);
+				//if(offset_C > samplesInBuffH/4 || offset_C <-samplesInBuffH/4 && currentWritePos == 0 ) //seems completely lost sync , force set frequency
 				if(offset_C > samplesInBuffH/4 || offset_C <-samplesInBuffH/4 ) //seems completely lost sync , force set frequency
 				{
 #if 1
-					//printf("forceB %d %d %d %d \n",appDistErr,appDistance,lastDmaPos,approximateSamplesOutedFromLastDMA);
+					//if(ledTimeOut>0)
+					printf("forceB curr %d corr %d offsc %d appdist %d %d %d %d sinb/2 %d\n",currentReadPos,corr,offset_C,appDistance,lastDmaCopy.lastDmaPos,approximateSamplesOutedFromLastDMA,timeFromLastDMA,samplesInBuff/2);
 					sForcedSpeed = (int)(inputSpeed*TIME_SCALE_FACT/outSpeed);
 					readSpeedXScaled = sForcedSpeed;
 					forceCounter ++;
-					readPositionXScaled = samplesInBuffScaled/2;
-					//readPositionXScaled = (samplesInBuffScaled/2+3*readPositionXScaled)/4;
+					// move position to center (currentWrite-B/2)
+					readPositionXScaled = ((currentWritePos<<TIME_SCALE_FACT)+ samplesInBuffScaled/2)%samplesInBuffScaled;
+					//readPositionXScaled =  samplesInBuffScaled/2;
 #endif
 				}
 				else
 				{
+#ifdef MAX_CORR
 					if(corr > MAX_CORR)
 					{
+						HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
+						ledTimeOut = 10;
 						corr = MAX_CORR;
 					}
-					if(corr < -MAX_CORR)
+					else if(corr < -MAX_CORR)
 					{
+						HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
+						ledTimeOut = 10;
 						corr  =-MAX_CORR;
 					}
-					readSpeedXScaled -= corr;
+					else
+#endif
+					{
+						if(ledTimeOut>0)
+						{
+							ledTimeOut--;
+						}
+						else
+						{
+							HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_SET);
+						}
+
+					}
+					readSpeedXScaled += corr;
 				}
+        	}
 		}
         else
         {
-        	if(!cPos)
         	readPositionXScaled = samplesInBuffScaled/2;
         }
 		prevPos =  appDistance;
+		int outSpeed = OUT_MODE==SPDIF?(FREQ/4):FREQ;
+		UsbSamplesAvail = 8.0f*samplesInBuff*(outSpeed+1)/(inputSpeed+1);
+    }
 }
 #endif
 #if 0
@@ -1060,7 +1100,7 @@ void example()
 					float sDif_mean,sDif_dev;
 					calcV(&sPos,&sPos_mean,&sPos_dev);
 					calcV(&sDif,&sDif_mean,&sDif_dev);
-					printf("%d mS  lost = %d fc %d corr=%d posM %d posS %d  difM %d difS %d %d %d %d\n",(int)((summ-prev_summ)*1000*31/(curr-start)),cntLost,forceCounter,cntCorr,(int)sPos_mean,(int)sPos_dev,(int)sDif_mean,(int)sDif_dev,(int)inputSpeed,(int)outSpeed,appDistErr);
+					printf("%x lost = %d fc %d corr=%d posM %d posS %d  difM %d difS %d %d %d %d\n",readSpeedXScaled,cntLost,forceCounter,cntCorr,(int)sPos_mean,(int)sPos_dev,(int)sDif_mean,(int)sDif_dev,(int)inputSpeed,(int)outSpeed,appDistErr);
 					clearV(&sPos);
 					clearV(&sDif);
 					//printf("%d KB/s %d %d appDistErr %d\n",(int)((summ-prev_summ)*1000*31/(curr-start)),(int)inputSpeed,(int)outSpeed,appDistErr);//cr_flush();
