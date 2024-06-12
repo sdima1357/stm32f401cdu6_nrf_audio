@@ -58,9 +58,12 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 #define USBD_AUDIO_FREQ 44100
 #endif
 
+#define SIGMA_BITS  15
+#define SIGMA       (1<<SIGMA_BITS)
+
 #define OLD
 
-#define LOW_LATENCY
+//#define LOW_LATENCY
 
 #ifdef LOW_LATENCY
 #define NUM_RCV_BFRS 2
@@ -69,10 +72,20 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 #endif
 
 
+#define ORDER 1
+#define LINEAR_INTERPOLATION
+#ifdef LINEAR_INTERPOLATION
+#define FREQ_SCALE (6.0)
+
+#define BIT_SHIFT_SCALE_FACT 12
+#define SHIFT_SCALE_FACT  (1<<BIT_SHIFT_SCALE_FACT)
+#else
+#define FREQ_SCALE (8.0f)
+#endif
+
 //#define DEBUG_INFO_PRINT
 
 #define SPDIF_FRAMES (192)
-#define LINEAR_INTERPOLATION
 
 //https://askubuntu.com/questions/78174/play-sound-through-two-or-more-outputs-devices
 //https://www.aliexpress.com/item/32810814170.html
@@ -115,6 +128,87 @@ static const uint8_t tx_address[5] = {0x17,0x27,0x37,0x47,0x57};
 //#define ASBUF_SIZE     (N_SIZE*2)
 //__attribute__((section(".noncacheable")))
 int16_t baudio_buffer[N_SIZE*4];
+
+uint16_t* VoiceBuff0 = (uint16_t*)&baudio_buffer[0];
+uint16_t* VoiceBuff1 = (uint16_t*)&baudio_buffer[N_SIZE];
+int MAX_VOL = 65536;
+void init_timers()
+{
+
+	  TIM1->ARR = MAX_VOL-1;
+	  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
+	  LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1, (uint32_t)&VoiceBuff0[0], (uint32_t)&TIM1->CCR1, LL_DMA_GetDataTransferDirection(DMA2, LL_DMA_STREAM_1));
+	  LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_1, N_SIZE);
+	  LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_1);
+	  LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_1);
+	  LL_DMA_EnableIT_HT(DMA2, LL_DMA_STREAM_1);
+
+	  LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_2, (uint32_t)&VoiceBuff1[0], (uint32_t)&TIM1->CCR2, LL_DMA_GetDataTransferDirection(DMA2, LL_DMA_STREAM_2));
+	  LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_2, N_SIZE);
+	  LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_2);
+	  LL_DMA_EnableIT_HT(DMA2, LL_DMA_STREAM_2);
+	  LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_2);
+
+
+
+	  /***************************/
+	  /* Enable the DMA transfer */
+	  /***************************/
+	  LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_1);
+	  LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_2);
+
+	  LL_TIM_EnableDMAReq_CC1(TIM1);
+	  LL_TIM_EnableDMAReq_CC2(TIM1);
+
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2);
+
+
+
+	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
+	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH2);
+
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2N);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1N,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH2,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH2N,LL_TIM_OCPOLARITY_HIGH);
+#if 0
+	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
+	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1N,LL_TIM_OCPOLARITY_LOW);
+      int res;
+	  res = LL_TIM_OC_GetPolarity(TIM1, LL_TIM_CHANNEL_CH1);
+	  printf("OC_GetPolarity %d\n",res);
+	  res = LL_TIM_OC_GetPolarity(TIM1, LL_TIM_CHANNEL_CH1N);
+	  printf("OC_GetPolarity %d\n",res);
+#endif
+
+
+	  LL_TIM_EnableCounter(TIM1);
+
+	  LL_TIM_GenerateEvent_UPDATE(TIM1);
+	  LL_TIM_GenerateEvent_CC1(TIM1);
+
+
+}
+void stop_timers()
+{
+	  LL_TIM_DisableCounter(TIM1);
+
+}
+void TIM1_TE1()
+{
+}
+void TIM1_TC2()
+{
+}
+void TIM1_HT2()
+{
+}
+void TIM1_TE2()
+{
+}
 
 #define INTERP_BITS  8
 enum modess {NONE=-1,PWM=0,I2S,SPDIF};
@@ -755,6 +849,160 @@ void HAL_I2S_ErrorCallback(I2S_HandleTypeDef *hi2s)
 	printf("HAL_I2S_ErrorCallback !!!!!!!!!!!!!!!\n");
   //BSP_AUDIO_OUT_Error_CallBack();
 }
+struct LR16 getNextSampleLR16()
+{
+	struct LR16 res;
+	struct LR res32=getNextSampleLR32B();
+	res.l = res32.L/256;
+	res.r = res32.R/256;
+	return res;
+}
+
+#define DATA_BITS_H 21
+#define DATA_BITS   22
+inline struct LR getNextSampleLR()
+{
+	struct LR res ;
+	//res.L = ((MAX_VOL)*((1<<DATA_BITS_H)))>>(DATA_BITS-SIGMA_BITS);
+	//res.R = ((MAX_VOL)*((1<<DATA_BITS_H)))>>(DATA_BITS-SIGMA_BITS);
+	//if(UsbSamplesAvail)
+	//{
+		struct LR res32 = getNextSampleLR32B();
+		res.L = ((MAX_VOL)*((res32.L>>2)+(1<<DATA_BITS_H)))>>(DATA_BITS-SIGMA_BITS);
+		res.R = ((MAX_VOL)*((res32.R>>2)+(1<<DATA_BITS_H)))>>(DATA_BITS-SIGMA_BITS);
+	//}
+	return res;
+
+}
+void cleanAudioBuffer()
+{
+#if 0
+	float amp =  MAX_VOL/8;
+	for(int k=0;k<N_SIZE;k++)
+	{
+		VoiceBuff0[k] = sin(k*M_PI*2/(N_SIZE-1))*amp+amp;
+		VoiceBuff1[k] = sin(4*k*M_PI*2/(N_SIZE-1))*amp+amp;
+
+	}
+#endif
+	///*
+	for(int k=0;k<N_SIZE;k++)
+	{
+		VoiceBuff0[k] = MAX_VOL/2;
+		VoiceBuff1[k] = MAX_VOL/2;
+	}
+	//*/
+}
+
+
+struct  sigmaDeltaStorage_SCALED
+{
+	int integral;
+//	int y;
+};
+struct  sigmaDeltaStorage2_SCALED
+{
+	int integral0;
+	int integral1;
+	//int y;
+};
+
+
+int sigma_delta_SCALED(struct sigmaDeltaStorage_SCALED* st,int x_SCALED)
+{
+	int y		 =st->integral>>SIGMA_BITS;
+	if(y < 0)
+		y = 0;
+	if(y > (MAX_VOL))
+		y = MAX_VOL;
+
+	st->integral+= x_SCALED - (y<<SIGMA_BITS);
+	return y;
+}
+
+inline int sigma_delta2_SCALED(struct sigmaDeltaStorage2_SCALED* st,int x_SCALED)
+{
+	int y		 =st->integral1>>SIGMA_BITS;
+	if(y < 0)
+		y = 0;
+	if(y > MAX_VOL)
+		y = MAX_VOL;
+
+	st->integral0+= x_SCALED      - (y<<SIGMA_BITS);
+	st->integral1+= st->integral0 - (y<<SIGMA_BITS);
+	//st->y		 =(st->integral1+SIGMA/2)/SIGMA;
+	return y;
+}
+
+
+struct sigmaDeltaStorage_SCALED static_L_channel_SCALED;
+struct sigmaDeltaStorage_SCALED static_R_channel_SCALED;
+
+struct sigmaDeltaStorage2_SCALED static_L_channel2_SCALED;
+struct sigmaDeltaStorage2_SCALED static_R_channel2_SCALED;
+
+void readDataTim(int offset)
+{
+
+#if    (ORDER==0)
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k+offset] =tt.L>>SIGMA_BITS;
+		VoiceBuff1[k+offset] =tt.R>>SIGMA_BITS;
+	}
+#endif
+#if (ORDER==1)
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k+offset] =sigma_delta_SCALED(&static_L_channel_SCALED,tt.L);
+		VoiceBuff1[k+offset] =sigma_delta_SCALED(&static_R_channel_SCALED,tt.R);
+	}
+#endif
+#if (ORDER==2)
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k+offset] =sigma_delta2_SCALED(&static_L_channel_SCALED,tt.L);
+		VoiceBuff1[k+offset] =sigma_delta2_SCALED(&static_R_channel_SCALED,tt.R);
+	}
+#endif
+	//HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin,UsbSamplesAvail?GPIO_PIN_RESET:GPIO_PIN_SET);
+	//tval0 = VoiceBuff0[offset];
+	//tval1 = VoiceBuff1[offset];
+}
+
+void TIM1_TC1()
+{
+	//HAL_GPIO_WritePin(SYNC_GPIO_Port,SYNC_Pin,GPIO_PIN_SET);
+
+    checkTime();
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
+	TransferComplete_CallBack_FS_Counter++;
+	readDataTim(N_SIZE/2);
+}
+void TIM1_HT1()
+{
+	//HAL_GPIO_WritePin(SYNC_GPIO_Port,SYNC_Pin,GPIO_PIN_RESET);
+	HalfTransfer_CallBack_FS_Counter++;
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
+    readDataTim(0);
+}
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -772,26 +1020,56 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void reinit_vars(enum modess mode)
 {
 	OUT_MODE = mode;
+	stop_timers();
 	HAL_I2S_DMAStop(&hi2s2);
 
-	FREQ = I2S_AUDIOFREQ_96K;
-	outSpeed = FREQ;
-	HAL_I2S_DeInit(&hi2s2);
-	  hi2s2.Instance = SPI2;
-	  hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
-	  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
-	  hi2s2.Init.DataFormat = I2S_DATAFORMAT_32B;
-	  hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-	  hi2s2.Init.AudioFreq = FREQ;
-	  hi2s2.Init.CPOL = I2S_CPOL_LOW;
-	  hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
-	  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-	  if (HAL_I2S_Init(&hi2s2) != HAL_OK)
-	  {
-	    Error_Handler();
-	  }
+	if(OUT_MODE==PWM)
+	{
+#if     (ORDER==0)
+		FREQ = USBD_AUDIO_FREQ;
+#else
+		FREQ = 	48000*FREQ_SCALE; //max 10!
+#endif
+		cleanAudioBuffer();
+		MAX_VOL = ((HAL_RCC_GetSysClockFreq()/FREQ)-2)&~1;
+		//MAX_VOL = (HAL_RCC_GetSysClockFreq()/FREQ)-1;
+	//	MAX_VOL = (SYS_CLK_MHZ*1000000/FREQ);
+		int fill = MAX_VOL/2*(1<<SIGMA_BITS);
+		static_L_channel_SCALED.integral = fill;
+		static_R_channel_SCALED.integral = fill;
+		static_L_channel2_SCALED.integral0 = fill;
+		static_R_channel2_SCALED.integral0 = fill;
+		static_L_channel2_SCALED.integral1 = fill;
+		static_R_channel2_SCALED.integral1 = fill;
+		FREQ = HAL_RCC_GetSysClockFreq()/(MAX_VOL);
+		  LL_TIM_DisableAllOutputs(TIM1);
+		readSpeedXScaled     = 1.001*TIME_SCALE_FACT*USBD_AUDIO_FREQ/(float)FREQ;
+		  init_timers();
+		  HAL_Delay(100);
+		  LL_TIM_EnableAllOutputs(TIM1);
+	}
+	else if(mode==I2S)
+	{
+		FREQ = I2S_AUDIOFREQ_96K;
+		outSpeed = FREQ;
+		HAL_I2S_DeInit(&hi2s2);
+		hi2s2.Instance = SPI2;
+		hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
+		hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
+		hi2s2.Init.DataFormat = I2S_DATAFORMAT_32B;
+		hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
+		hi2s2.Init.AudioFreq = FREQ;
+		hi2s2.Init.CPOL = I2S_CPOL_LOW;
+		hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
+		hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
+		if (HAL_I2S_Init(&hi2s2) != HAL_OK)
+		{
+		Error_Handler();
+		}
+		readSpeedXScaled     = 1.001*TIME_SCALE_FACT*USBD_AUDIO_FREQ/(float)FREQ;
+		HAL_I2S_Transmit_DMA(&hi2s2, baudio_buffer,N_SIZE*2);
+	}
 	readSpeedXScaled     = 1.001*TIME_SCALE_FACT*USBD_AUDIO_FREQ/(float)FREQ;
-	HAL_I2S_Transmit_DMA(&hi2s2, baudio_buffer,N_SIZE*2);
 
 }
 void example()
@@ -1016,6 +1294,7 @@ static void MX_CRC_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_I2S2_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -1061,6 +1340,7 @@ int main(void)
   MX_TIM3_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_I2S2_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   cr_flush();
   printf("\nStart program sys clk=%d MHz\n",HAL_RCC_GetSysClockFreq()/1000000);
@@ -1228,6 +1508,143 @@ static void MX_SPI3_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  LL_TIM_InitTypeDef TIM_InitStruct = {0};
+  LL_TIM_OC_InitTypeDef TIM_OC_InitStruct = {0};
+  LL_TIM_BDTR_InitTypeDef TIM_BDTRInitStruct = {0};
+
+  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* Peripheral clock enable */
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM1);
+
+  /* TIM1 DMA Init */
+
+  /* TIM1_CH1 Init */
+  LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_1, LL_DMA_CHANNEL_6);
+
+  LL_DMA_SetDataTransferDirection(DMA2, LL_DMA_STREAM_1, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
+
+  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_1, LL_DMA_PRIORITY_HIGH);
+
+  LL_DMA_SetMode(DMA2, LL_DMA_STREAM_1, LL_DMA_MODE_CIRCULAR);
+
+  LL_DMA_SetPeriphIncMode(DMA2, LL_DMA_STREAM_1, LL_DMA_PERIPH_NOINCREMENT);
+
+  LL_DMA_SetMemoryIncMode(DMA2, LL_DMA_STREAM_1, LL_DMA_MEMORY_INCREMENT);
+
+  LL_DMA_SetPeriphSize(DMA2, LL_DMA_STREAM_1, LL_DMA_PDATAALIGN_HALFWORD);
+
+  LL_DMA_SetMemorySize(DMA2, LL_DMA_STREAM_1, LL_DMA_MDATAALIGN_HALFWORD);
+
+  LL_DMA_EnableFifoMode(DMA2, LL_DMA_STREAM_1);
+
+  LL_DMA_SetFIFOThreshold(DMA2, LL_DMA_STREAM_1, LL_DMA_FIFOTHRESHOLD_FULL);
+
+  LL_DMA_SetMemoryBurstxfer(DMA2, LL_DMA_STREAM_1, LL_DMA_MBURST_SINGLE);
+
+  LL_DMA_SetPeriphBurstxfer(DMA2, LL_DMA_STREAM_1, LL_DMA_PBURST_SINGLE);
+
+  /* TIM1_CH2 Init */
+  LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_2, LL_DMA_CHANNEL_6);
+
+  LL_DMA_SetDataTransferDirection(DMA2, LL_DMA_STREAM_2, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
+
+  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_2, LL_DMA_PRIORITY_HIGH);
+
+  LL_DMA_SetMode(DMA2, LL_DMA_STREAM_2, LL_DMA_MODE_CIRCULAR);
+
+  LL_DMA_SetPeriphIncMode(DMA2, LL_DMA_STREAM_2, LL_DMA_PERIPH_NOINCREMENT);
+
+  LL_DMA_SetMemoryIncMode(DMA2, LL_DMA_STREAM_2, LL_DMA_MEMORY_INCREMENT);
+
+  LL_DMA_SetPeriphSize(DMA2, LL_DMA_STREAM_2, LL_DMA_PDATAALIGN_HALFWORD);
+
+  LL_DMA_SetMemorySize(DMA2, LL_DMA_STREAM_2, LL_DMA_MDATAALIGN_HALFWORD);
+
+  LL_DMA_EnableFifoMode(DMA2, LL_DMA_STREAM_2);
+
+  LL_DMA_SetFIFOThreshold(DMA2, LL_DMA_STREAM_2, LL_DMA_FIFOTHRESHOLD_FULL);
+
+  LL_DMA_SetMemoryBurstxfer(DMA2, LL_DMA_STREAM_2, LL_DMA_MBURST_SINGLE);
+
+  LL_DMA_SetPeriphBurstxfer(DMA2, LL_DMA_STREAM_2, LL_DMA_PBURST_SINGLE);
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  TIM_InitStruct.Prescaler = 0;
+  TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
+  TIM_InitStruct.Autoreload = 65535;
+  TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
+  TIM_InitStruct.RepetitionCounter = 0;
+  LL_TIM_Init(TIM1, &TIM_InitStruct);
+  LL_TIM_DisableARRPreload(TIM1);
+  LL_TIM_SetClockSource(TIM1, LL_TIM_CLOCKSOURCE_INTERNAL);
+  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
+  TIM_OC_InitStruct.OCMode = LL_TIM_OCMODE_PWM1;
+  TIM_OC_InitStruct.OCState = LL_TIM_OCSTATE_DISABLE;
+  TIM_OC_InitStruct.OCNState = LL_TIM_OCSTATE_DISABLE;
+  TIM_OC_InitStruct.CompareValue = 0;
+  TIM_OC_InitStruct.OCPolarity = LL_TIM_OCPOLARITY_HIGH;
+  TIM_OC_InitStruct.OCNPolarity = LL_TIM_OCPOLARITY_HIGH;
+  TIM_OC_InitStruct.OCIdleState = LL_TIM_OCIDLESTATE_LOW;
+  TIM_OC_InitStruct.OCNIdleState = LL_TIM_OCIDLESTATE_LOW;
+  LL_TIM_OC_Init(TIM1, LL_TIM_CHANNEL_CH1, &TIM_OC_InitStruct);
+  LL_TIM_OC_DisableFast(TIM1, LL_TIM_CHANNEL_CH1);
+  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH2);
+  LL_TIM_OC_Init(TIM1, LL_TIM_CHANNEL_CH2, &TIM_OC_InitStruct);
+  LL_TIM_OC_DisableFast(TIM1, LL_TIM_CHANNEL_CH2);
+  LL_TIM_SetTriggerOutput(TIM1, LL_TIM_TRGO_RESET);
+  LL_TIM_DisableMasterSlaveMode(TIM1);
+  TIM_BDTRInitStruct.OSSRState = LL_TIM_OSSR_DISABLE;
+  TIM_BDTRInitStruct.OSSIState = LL_TIM_OSSI_DISABLE;
+  TIM_BDTRInitStruct.LockLevel = LL_TIM_LOCKLEVEL_OFF;
+  TIM_BDTRInitStruct.DeadTime = 0;
+  TIM_BDTRInitStruct.BreakState = LL_TIM_BREAK_DISABLE;
+  TIM_BDTRInitStruct.BreakPolarity = LL_TIM_BREAK_POLARITY_HIGH;
+  TIM_BDTRInitStruct.AutomaticOutput = LL_TIM_AUTOMATICOUTPUT_DISABLE;
+  LL_TIM_BDTR_Init(TIM1, &TIM_BDTRInitStruct);
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOB);
+  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOA);
+  /**TIM1 GPIO Configuration
+  PB0   ------> TIM1_CH2N
+  PB13   ------> TIM1_CH1N
+  PA8   ------> TIM1_CH1
+  PA9   ------> TIM1_CH2
+  */
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_0|LL_GPIO_PIN_13;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
+  LL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_9;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -1348,11 +1765,18 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
+  /* DMA2_Stream1_IRQn interrupt configuration */
+  NVIC_SetPriority(DMA2_Stream1_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  NVIC_SetPriority(DMA2_Stream2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 

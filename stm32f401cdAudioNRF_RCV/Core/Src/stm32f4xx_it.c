@@ -226,6 +226,64 @@ void DMA1_Stream4_IRQHandler(void)
   /* USER CODE END DMA1_Stream4_IRQn 1 */
 }
 
+/**
+  * @brief This function handles DMA2 stream1 global interrupt.
+  */
+void DMA2_Stream1_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream1_IRQn 0 */
+	if(LL_DMA_IsActiveFlag_TC1(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_TC1(DMA2);
+		TIM1_TC1();
+	}
+	if(LL_DMA_IsActiveFlag_HT1(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_HT1(DMA2);
+		TIM1_HT1();
+	}
+	if(LL_DMA_IsActiveFlag_TE1(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_TE1(DMA2);
+		TIM1_TE1();
+	}
+
+  /* USER CODE END DMA2_Stream1_IRQn 0 */
+
+  /* USER CODE BEGIN DMA2_Stream1_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream1_IRQn 1 */
+}
+
+/**
+  * @brief This function handles DMA2 stream2 global interrupt.
+  */
+void DMA2_Stream2_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream2_IRQn 0 */
+	if(LL_DMA_IsActiveFlag_TC2(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_TC2(DMA2);
+		TIM1_TC2();
+	}
+	if(LL_DMA_IsActiveFlag_HT2(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_HT2(DMA2);
+		TIM1_HT2();
+	}
+	if(LL_DMA_IsActiveFlag_TE2(DMA2) == 1)
+	{
+		LL_DMA_ClearFlag_TE2(DMA2);
+		TIM1_TE2();
+	}
+
+  /* USER CODE END DMA2_Stream2_IRQn 0 */
+
+  /* USER CODE BEGIN DMA2_Stream2_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream2_IRQn 1 */
+}
+
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
